@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ottawa Washroom Finder</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map { height: 100vh; width: 100%; } /* Make the map full screen */
+        body { margin: 0; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <script>
+        // 3. Initialize the Map centered on downtown Ottawa
+        const map = L.map('map').setView([45.4215, -75.6972], 13);
+
+        // 4. Add the actual map graphics (OpenStreetMap)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        // 5. The Link you copied from the screenshot!
+        const washroomUrl = "PASTE_YOUR_COPIED_LINK_HERE";
+
+        // 6. Fetch the data and put it on the map
+        fetch(washroomUrl)
+            .then(response => response.json())
+            .then(data => {
+                L.geoJSON(data, {
+                    onEachFeature: function (feature, layer) {
+                        // This makes a popup appear when you click a dot
+                        layer.bindPopup("Public Washroom: " + feature.properties.NAME);
+                    }
+                }).addTo(map);
+            })
+            .catch(err => console.error("Error loading washrooms:", err));
+    </script>
+</body>
+</html>
