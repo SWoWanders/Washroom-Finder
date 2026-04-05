@@ -22,7 +22,7 @@
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
         // 5. The Link you copied from the screenshot!
-        const washroomUrl = "PASTE_YOUR_COPIED_LINK_HERE";
+        const washroomUrl = "https://maps.ottawa.ca/arcgis/rest/services/PublicWashrooms/MapServer/0/query?outFields=*&where=1%3D1&f=geojson";
 
         // 6. Fetch the data and put it on the map
         fetch(washroomUrl)
