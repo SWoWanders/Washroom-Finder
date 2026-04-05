@@ -5,33 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
     <style>
-        /* Modern Layout Fix */
-        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; display: flex; flex-direction: column; font-family: sans-serif; }
-        
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; display: flex; flex-direction: column; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         #map { flex-grow: 1; width: 100%; }
-        
         #radar { 
-            height: 220px; /* Specific height to prevent cutoff */
+            height: 240px; 
             width: 100%; 
             background: #ffffff; 
             display: flex; 
             flex-direction: column; 
             justify-content: center; 
             align-items: center;
-            border-top: 3px solid #004b7a;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-            padding-bottom: env(safe-area-inset-bottom); /* Fix for modern phone notches */
+            border-top: 4px solid #004b7a;
+            box-shadow: 0 -4px 15px rgba(0,0,0,0.1);
+            padding-bottom: env(safe-area-inset-bottom);
             z-index: 2000;
         }
-
-        #arrow { 
-            font-size: 80px; 
-            transition: transform 0.1s linear; 
-            display: inline-block; 
-            user-select: none;
-        }
-
-        #info { margin-top: 10px; text-align: center; padding: 0 15px; line-height: 1.4; }
+        #arrow { font-size: 85px; transition: transform 0.1s linear; display: inline-block; filter: drop-shadow(0 2px 5px rgba(0,0,0,0.2)); }
+        #info { margin-top: 12px; text-align: center; padding: 0 20px; line-height: 1.5; color: #333; }
+        .distance-tag { font-size: 1.2rem; font-weight: bold; color: #004b7a; }
+        .time-tag { color: #666; font-size: 0.9rem; }
     </style>
 </head>
 <body>
@@ -40,55 +32,55 @@
 
     <div id="radar">
         <div id="arrow">⬆️</div>
-        <p id="info">Initializing Ottawa Loo Finder...</p>
+        <div id="info">Initializing...</div>
     </div>
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
     <script>
-        // 1. Setup variables
-        const map = L.map('map').setView([45.4215, -75.6972], 14);
+        const map = L.map('map', { zoomControl: false }).setView([45.4215, -75.6972], 15);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
         const washroomUrl = "https://maps.ottawa.ca/arcgis/rest/services/PublicWashrooms/MapServer/0/query?outFields=*&where=1%3D1&f=geojson";
         let washroomData = null;
-        let userMarker = L.circleMarker([0, 0], { radius: 8, color: 'white', fillColor: '#007bff', fillOpacity: 1, weight: 2 }).addTo(map);
+        let userMarker = L.circleMarker([0, 0], { radius: 10, color: 'white', fillColor: '#007bff', fillOpacity: 1, weight: 3 }).addTo(map);
         
-        let targetBearing = 0; // Bearing to the washroom
-        let currentCompass = 0; // Where the phone is pointing
+        let targetBearing = 0;
+        let currentCompass = 0;
 
-        // 2. The Logic: Is it open?
         function getStatus(toilet) {
             const now = new Date();
             const hour = now.getHours();
             const month = now.getMonth(); 
             const isWinter = (month < 4 || month > 9); 
-            
-            if (toilet.properties.TYPE === 'Park' && isWinter) {
-                return { open: false, message: "Closed (Winter Season)" };
-            }
-            if (hour >= 6 && hour < 23) {
-                return { open: true, message: "Likely Open" };
-            }
-            return { open: false, message: "Closed for the night" };
+            if (toilet.properties.TYPE === 'Park' && isWinter) return { open: false, message: "Closed (Winter)" };
+            if (hour >= 6 && hour < 23) return { open: true, message: "Likely Open" };
+            return { open: false, message: "Closed" };
         }
 
-        // 3. Compass Tracking (The Flashlight Effect)
+        // --- MATH: CALCULATE REAL DISTANCE IN METERS ---
+        function getDistanceInMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Earth radius in meters
+            const φ1 = lat1 * Math.PI/180;
+            const φ2 = lat2 * Math.PI/180;
+            const Δφ = (lat2-lat1) * Math.PI/180;
+            const Δλ = (lon2-lon1) * Math.PI/180;
+
+            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; 
+        }
+
         window.addEventListener('deviceorientationabsolute', (event) => {
             if (event.alpha !== null) {
                 currentCompass = event.alpha;
-                updateArrowUI();
+                const finalRotation = targetBearing - currentCompass;
+                document.getElementById('arrow').style.transform = `rotate(${finalRotation}deg)`;
             }
         }, true);
 
-        function updateArrowUI() {
-            // The arrow rotation = (Bearing to washroom) MINUS (Compass heading)
-            // This makes the arrow stay pointed at the target even as you spin
-            const finalRotation = targetBearing - currentCompass;
-            document.getElementById('arrow').style.transform = `rotate(${finalRotation}deg)`;
-        }
-
-        // 4. Find closest and calculate bearing
         function findClosestWashroom(uLat, uLon) {
             if (!washroomData) return;
             
@@ -97,10 +89,9 @@
 
             washroomData.features.forEach(toilet => {
                 if (!getStatus(toilet).open) return;
-
                 const tLon = toilet.geometry.coordinates[0];
                 const tLat = toilet.geometry.coordinates[1];
-                const d = Math.sqrt(Math.pow(uLat - tLat, 2) + Math.pow(uLon - tLon, 2));
+                const d = getDistanceInMeters(uLat, uLon, tLat, tLon);
                 
                 if (d < minDistance) {
                     minDistance = d;
@@ -111,43 +102,43 @@
             if (closest) {
                 const tLat = closest.geometry.coordinates[1];
                 const tLon = closest.geometry.coordinates[0];
+                const dist = Math.round(minDistance);
+                const walkMin = Math.round(dist / 80); // ~80m per minute
                 const status = getStatus(closest);
 
-                // Update text
                 document.getElementById('info').innerHTML = `
+                    <span class="distance-tag">${dist}m away</span><br>
+                    <span class="time-tag">🚶 Approx. ${walkMin} min walk</span><br>
                     <strong>${closest.properties.NAME}</strong><br>
                     <span style="color: green;">● ${status.message}</span>
                 `;
 
-                // Calculate bearing to target
+                // Calculate bearing
                 const dLon = (tLon - uLon) * Math.PI / 180;
                 const y = Math.sin(dLon) * Math.cos(tLat * Math.PI / 180);
                 const x = Math.cos(uLat * Math.PI / 180) * Math.sin(tLat * Math.PI / 180) -
                           Math.sin(uLat * Math.PI / 180) * Math.cos(tLat * Math.PI / 180) * Math.cos(dLon);
-                
                 targetBearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-                updateArrowUI();
             }
         }
 
-        // 5. Start the App
         fetch(washroomUrl)
             .then(res => res.json())
             .then(data => {
                 washroomData = data;
                 L.geoJSON(data, {
-                    pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 5, color: '#004b7a' }),
-                    onEachFeature: (f, l) => l.bindPopup(f.properties.NAME)
+                    pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 6, color: '#004b7a', weight: 2, fillOpacity: 0.5 }),
+                    onEachFeature: (f, l) => l.bindPopup(`<b>${f.properties.NAME}</b>`)
                 }).addTo(map);
 
                 navigator.geolocation.watchPosition((pos) => {
                     const lat = pos.coords.latitude;
                     const lon = pos.coords.longitude;
                     userMarker.setLatLng([lat, lon]);
-                    map.panTo([lat, lon]);
+                    map.setView([lat, lon], 16);
                     findClosestWashroom(lat, lon);
                 }, (err) => {
-                    document.getElementById('info').innerText = "Please enable GPS to use the radar.";
+                    document.getElementById('info').innerText = "GPS Error: Please enable location.";
                 }, { enableHighAccuracy: true });
             });
     </script>
