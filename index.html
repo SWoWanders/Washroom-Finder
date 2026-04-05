@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ottawa Loo Finder - Compass Mode</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; display: flex; flex-direction: column; font-family: sans-serif; background: black; }
+        
+        /* The Wrapper prevents the rotated map from showing white corners */
+        #map-wrapper { flex-grow: 1; overflow: hidden; position: relative; background: #aad3df; }
+        #map { height: 150%; width: 150%; position: absolute; top: -25%; left: -25%; transition: transform 0.1s linear; }
+
+        #radar { 
+            height: 240px; 
+            width: 100%; 
+            background: #ffffff; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center;
+            border-top: 4px solid #004b7a;
+            box-shadow: 0 -4px 15px rgba(0,0,0,0.3);
+            padding-bottom: env(safe-area-inset-bottom);
+            z-index: 2000;
+        }
+
+        #arrow { font-size: 80px; transition: transform 0.1s linear; display: inline-block; z-index: 2100; }
+        #info { margin-top: 10px; text-align: center; padding: 0 20px; line-height: 1.4; color: #333; }
+        .distance-tag { font-size: 1.2rem; font-weight: bold; color: #004b7a; }
+    </style>
+</head>
+<body>
+
+    <div id="map-wrapper">
+        <div id="map"></div>
+    </div>
+
+    <div id="radar">
+        <div id="arrow">⬆️</div>
+        <div id="info">Aligning Compass...</div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <script>
+        // 1. Initialize Map (Larger than screen to allow rotation without white edges)
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([45.4215, -75.6972], 16);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        const washroomUrl = "https://maps.ottawa.ca/arcgis/rest/services/PublicWashrooms/MapServer/0/query?outFields=*&where=1%3D1&f=geojson";
+        let washroomData = null;
+        let userMarker = L.circleMarker([0, 0], { radius: 10, color: 'white', fillColor: '#007bff', fillOpacity: 1, weight: 3 }).addTo(map);
+        
+        let targetBearing = 0;
+        let currentCompass = 0;
+
+        function getStatus(toilet) {
+            const now = new Date();
+            const hour = now.getHours();
+            const month = now.getMonth(); 
+            if (toilet.properties.TYPE === 'Park' && (month < 4 || month > 9)) return { open: false, message: "Closed (Winter)" };
+            return (hour >= 6 && hour < 23) ? { open: true, message: "Likely Open" } : { open: false, message: "Closed" };
+        }
+
+        // --- COMPASS & ROTATION LOGIC ---
+        window.addEventListener('deviceorientationabsolute', (event) => {
+            if (event.alpha !== null) {
+                currentCompass = event.alpha;
+                
+                // Rotate the whole map div
+                document.getElementById('map').style.transform = `rotate(${-currentCompass}deg)`;
+
+                // Counter-rotate markers so they stay upright
+                const markers = document.querySelectorAll('.leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-interactive');
+                markers.forEach(m => {
+                    // We only rotate markers that aren't the user circle
+                    if (m !== userMarker._path) {
+                        m.style.transformOrigin = "center";
+                        // We extract existing translation and add rotation
+                        const currentTransform = m.style.transform.split('rotate')[0];
+                        m.style.transform = `${currentTransform} rotate(${currentCompass}deg)`;
+                    }
+                });
+
+                // Update the directional arrow
+                const finalRotation = targetBearing - currentCompass;
+                document.getElementById('arrow').style.transform = `rotate(${finalRotation}deg)`;
+            }
+        }, true);
+
+        function findClosestWashroom(uLat, uLon) {
+            if (!washroomData) return;
+            let closest = null;
+            let minDistance = Infinity;
+
+            washroomData.features.forEach(toilet => {
+                if (!getStatus(toilet).open) return;
+                const tLon = toilet.geometry.coordinates[0];
+                const tLat = toilet.geometry.coordinates[1];
+                const d = Math.sqrt(Math.pow(uLat - tLat, 2) + Math.pow(uLon - tLon, 2));
+                if (d < minDistance) { minDistance = d; closest = toilet; }
+            });
+
+            if (closest) {
+                const tLat = closest.geometry.coordinates[1];
+                const tLon = closest.geometry.coordinates[0];
+                
+                // Bearing Math
+                const dLon = (tLon - uLon) * Math.PI / 180;
+                const y = Math.sin(dLon) * Math.cos(tLat * Math.PI / 180);
+                const x = Math.cos(uLat * Math.PI / 180) * Math.sin(tLat * Math.PI / 180) -
+                          Math.sin(uLat * Math.PI / 180) * Math.cos(tLat * Math.PI / 180) * Math.cos(dLon);
+                targetBearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+
+                document.getElementById('info').innerHTML = `
+                    <span class="distance-tag">Closest: ${closest.properties.NAME}</span><br>
+                    <span style="color: green;">● ${getStatus(closest).message}</span>
+                `;
+            }
+        }
+
+        fetch(washroomUrl)
+            .then(res => res.json())
+            .then(data => {
+                washroomData = data;
+                L.geoJSON(data, {
+                    pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 7, color: '#004b7a', fillColor: '#004b7a', fillOpacity: 0.8 })
+                }).addTo(map);
+
+                navigator.geolocation.watchPosition((pos) => {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    userMarker.setLatLng([lat, lon]);
+                    map.panTo([lat, lon]);
+                    findClosestWashroom(lat, lon);
+                }, null, { enableHighAccuracy: true });
+            });
+    </script>
+</body>
+</html>
