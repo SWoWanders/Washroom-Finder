@@ -15,6 +15,21 @@
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
     <script>
+        let userLat, userLon;
+
+// This asks the phone for permission and starts the tracker
+navigator.geolocation.watchPosition((position) => {
+    userLat = position.coords.latitude;
+    userLon = position.coords.longitude;
+    
+    console.log(`You are at: ${userLat}, ${userLon}`);
+    
+    // Every time the user moves, we find the closest loo
+    findClosestWashroom(userLat, userLon);
+}, (error) => {
+    console.error("GPS Error: ", error);
+}, { enableHighAccuracy: true });
+
         // 3. Initialize the Map centered on downtown Ottawa
         const map = L.map('map').setView([45.4215, -75.6972], 13);
 
