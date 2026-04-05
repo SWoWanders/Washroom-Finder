@@ -31,6 +31,41 @@
 
         // --- STEP B: PASTE THE "RADAR" AND "DISTANCE" FUNCTIONS HERE ---
         // (This is Step 2 and 3 from my previous message)
+        function findClosestWashroom(lat, lon) {
+    let closest = null;
+    let minDistance = Infinity;
+
+    // 'washroomData' is the variable where you stored your fetch() result
+    washroomData.features.forEach(toilet => {
+        const tLon = toilet.geometry.coordinates[0];
+        const tLat = toilet.geometry.coordinates[1];
+        
+        // Calculate distance (simplified for small distances)
+        const d = Math.sqrt(Math.pow(lat - tLat, 2) + Math.pow(lon - tLon, 2));
+        
+        if (d < minDistance) {
+            minDistance = d;
+            closest = toilet;
+        }
+    });
+
+    if (closest) {
+        document.getElementById('info').innerText = `Closest: ${closest.properties.NAME}`;
+        updateRadar(lat, lon, closest.geometry.coordinates[1], closest.geometry.coordinates[0]);
+    }
+}
+function updateRadar(lat1, lon1, lat2, lon2) {
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
+    const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+              Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
+    
+    let bearing = Math.atan2(y, x) * 180 / Math.PI;
+    bearing = (bearing + 360) % 360; // Keep it between 0 and 360
+
+    // Rotate the arrow icon in your HTML
+    document.getElementById('arrow').style.transform = `rotate(${bearing}deg)`;
+}
         
         function findClosestWashroom(lat, lon) {
             if (!washroomData) return; // Wait until data is loaded
