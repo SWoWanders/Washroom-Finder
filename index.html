@@ -15,42 +15,71 @@
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
     <script>
-        let userLat, userLon;
-
-// This asks the phone for permission and starts the tracker
-navigator.geolocation.watchPosition((position) => {
-    userLat = position.coords.latitude;
-    userLon = position.coords.longitude;
-    
-    console.log(`You are at: ${userLat}, ${userLon}`);
-    
-    // Every time the user moves, we find the closest loo
-    findClosestWashroom(userLat, userLon);
-}, (error) => {
-    console.error("GPS Error: ", error);
-}, { enableHighAccuracy: true });
-
-        // 3. Initialize the Map centered on downtown Ottawa
         const map = L.map('map').setView([45.4215, -75.6972], 13);
-
-        // 4. Add the actual map graphics (OpenStreetMap)
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // 5. The Link you copied from the screenshot!
-        const washroomUrl = "https://maps.ottawa.ca/arcgis/rest/services/PublicWashrooms/MapServer/0/query?outFields=*&where=1%3D1&f=geojson";
+        const washroomUrl = "YOUR_LINK_HERE";
+        let washroomData = null; // We'll store the "stickers" here once they arrive
 
-        // 6. Fetch the data and put it on the map
+        // --- STEP A: FETCH THE DATA ---
         fetch(washroomUrl)
             .then(response => response.json())
             .then(data => {
-                L.geoJSON(data, {
-                    onEachFeature: function (feature, layer) {
-                        // This makes a popup appear when you click a dot
-                        layer.bindPopup("Public Washroom: " + feature.properties.NAME);
-                    }
-                }).addTo(map);
-            })
-            .catch(err => console.error("Error loading washrooms:", err));
+                washroomData = data; // Save it for our distance math later
+                L.geoJSON(data).addTo(map);
+            });
+
+        // --- STEP B: PASTE THE "RADAR" AND "DISTANCE" FUNCTIONS HERE ---
+        // (This is Step 2 and 3 from my previous message)
+        
+        function findClosestWashroom(lat, lon) {
+            if (!washroomData) return; // Wait until data is loaded
+            
+            let closest = null;
+            let minDistance = Infinity;
+
+            washroomData.features.forEach(toilet => {
+                const tLon = toilet.geometry.coordinates[0];
+                const tLat = toilet.geometry.coordinates[1];
+                
+                // The "As the crow flies" math
+                const d = Math.sqrt(Math.pow(lat - tLat, 2) + Math.pow(lon - tLon, 2));
+                
+                if (d < minDistance) {
+                    minDistance = d;
+                    closest = toilet;
+                }
+            });
+
+            if (closest) {
+                document.getElementById('info').innerText = `Closest: ${closest.properties.NAME}`;
+                updateRadar(lat, lon, closest.geometry.coordinates[1], closest.geometry.coordinates[0]);
+            }
+        }
+
+        function updateRadar(lat1, lon1, lat2, lon2) {
+            // This is the math that turns coordinates into a compass angle
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
+            const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+                      Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
+            
+            let bearing = Math.atan2(y, x) * 180 / Math.PI;
+            bearing = (bearing + 360) % 360; 
+
+            document.getElementById('arrow').style.transform = `rotate(${bearing}deg)`;
+        }
+
+        // --- STEP C: PASTE THE "TRACKER" HERE ---
+        // This tells the phone to start watching your movement
+        navigator.geolocation.watchPosition((position) => {
+            const userLat = position.coords.latitude;
+            const userLon = position.coords.longitude;
+            
+            // Call our math function every time we move
+            findClosestWashroom(userLat, userLon);
+        }, (err) => console.error(err), { enableHighAccuracy: true });
+
     </script>
 </body>
 </html>
