@@ -38,109 +38,59 @@
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
     <script>
-        const map = L.map('map', { zoomControl: false }).setView([45.4215, -75.6972], 15);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    // ... existing map and marker setup ...
 
-        const washroomUrl = "https://maps.ottawa.ca/arcgis/rest/services/PublicWashrooms/MapServer/0/query?outFields=*&where=1%3D1&f=geojson";
-        let washroomData = null;
-        let userMarker = L.circleMarker([0, 0], { radius: 10, color: 'white', fillColor: '#007bff', fillOpacity: 1, weight: 3 }).addTo(map);
+// NEW: Status logger to help you debug on your phone
+function updateStatus(msg) {
+    const info = document.getElementById('info');
+    if (info) info.innerText = msg;
+}
+
+// 1. Start by fetching data
+updateStatus("Fetching Ottawa data...");
+fetch(washroomUrl)
+    .then(res => res.json())
+    .then(data => {
+        washroomData = data;
+        L.geoJSON(data, {
+            pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 7, color: '#004b7a', fillColor: '#004b7a', fillOpacity: 0.8 })
+        }).addTo(map);
         
-        let targetBearing = 0;
-        let currentCompass = 0;
+        updateStatus("Data loaded. Waiting for GPS...");
 
-        function getStatus(toilet) {
-            const now = new Date();
-            const hour = now.getHours();
-            const month = now.getMonth(); 
-            const isWinter = (month < 4 || month > 9); 
-            if (toilet.properties.TYPE === 'Park' && isWinter) return { open: false, message: "Closed (Winter)" };
-            if (hour >= 6 && hour < 23) return { open: true, message: "Likely Open" };
-            return { open: false, message: "Closed" };
-        }
-
-        // --- MATH: CALCULATE REAL DISTANCE IN METERS ---
-        function getDistanceInMeters(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // Earth radius in meters
-            const φ1 = lat1 * Math.PI/180;
-            const φ2 = lat2 * Math.PI/180;
-            const Δφ = (lat2-lat1) * Math.PI/180;
-            const Δλ = (lon2-lon1) * Math.PI/180;
-
-            const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ/2) * Math.sin(Δλ/2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            return R * c; 
-        }
-
-        window.addEventListener('deviceorientationabsolute', (event) => {
-            if (event.alpha !== null) {
-                currentCompass = event.alpha;
-                const finalRotation = targetBearing - currentCompass;
-                document.getElementById('arrow').style.transform = `rotate(${finalRotation}deg)`;
-            }
-        }, true);
-
-        function findClosestWashroom(uLat, uLon) {
-            if (!washroomData) return;
+        // 2. Start GPS tracking
+        navigator.geolocation.watchPosition((pos) => {
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
             
-            let closest = null;
-            let minDistance = Infinity;
-
-            washroomData.features.forEach(toilet => {
-                if (!getStatus(toilet).open) return;
-                const tLon = toilet.geometry.coordinates[0];
-                const tLat = toilet.geometry.coordinates[1];
-                const d = getDistanceInMeters(uLat, uLon, tLat, tLon);
-                
-                if (d < minDistance) {
-                    minDistance = d;
-                    closest = toilet;
-                }
-            });
-
-            if (closest) {
-                const tLat = closest.geometry.coordinates[1];
-                const tLon = closest.geometry.coordinates[0];
-                const dist = Math.round(minDistance);
-                const walkMin = Math.round(dist / 80); // ~80m per minute
-                const status = getStatus(closest);
-
-                document.getElementById('info').innerHTML = `
-                    <span class="distance-tag">${dist}m away</span><br>
-                    <span class="time-tag">🚶 Approx. ${walkMin} min walk</span><br>
-                    <strong>${closest.properties.NAME}</strong><br>
-                    <span style="color: green;">● ${status.message}</span>
-                `;
-
-                // Calculate bearing
-                const dLon = (tLon - uLon) * Math.PI / 180;
-                const y = Math.sin(dLon) * Math.cos(tLat * Math.PI / 180);
-                const x = Math.cos(uLat * Math.PI / 180) * Math.sin(tLat * Math.PI / 180) -
-                          Math.sin(uLat * Math.PI / 180) * Math.cos(tLat * Math.PI / 180) * Math.cos(dLon);
-                targetBearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+            userMarker.setLatLng([lat, lon]);
+            map.panTo([lat, lon]);
+            
+            // If we have data, find the closest loo
+            if (washroomData) {
+                findClosestWashroom(lat, lon);
+            } else {
+                updateStatus("GPS found, but data is missing...");
             }
-        }
+        }, (err) => {
+            // This will tell you if GPS is blocked
+            updateStatus("GPS Error: " + err.message);
+        }, { 
+            enableHighAccuracy: true,
+            timeout: 10000, // Wait 10 seconds before erroring
+            maximumAge: 0 
+        });
+    })
+    .catch(err => updateStatus("Fetch Error: " + err.message));
 
-        fetch(washroomUrl)
-            .then(res => res.json())
-            .then(data => {
-                washroomData = data;
-                L.geoJSON(data, {
-                    pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 6, color: '#004b7a', weight: 2, fillOpacity: 0.5 }),
-                    onEachFeature: (f, l) => l.bindPopup(`<b>${f.properties.NAME}</b>`)
-                }).addTo(map);
+// 3. Compass (Non-blocking)
+window.addEventListener('deviceorientationabsolute', (event) => {
+    if (event.alpha !== null) {
+        currentCompass = event.alpha;
+        // Rotation code here...
+    }
+}, true);
 
-                navigator.geolocation.watchPosition((pos) => {
-                    const lat = pos.coords.latitude;
-                    const lon = pos.coords.longitude;
-                    userMarker.setLatLng([lat, lon]);
-                    map.setView([lat, lon], 16);
-                    findClosestWashroom(lat, lon);
-                }, (err) => {
-                    document.getElementById('info').innerText = "GPS Error: Please enable location.";
-                }, { enableHighAccuracy: true });
-            });
     </script>
 </body>
 </html>
