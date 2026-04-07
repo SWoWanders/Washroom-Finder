@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ottawa Washroom Finder</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; display: flex; flex-direction: column; font-family: sans-serif; background: #aad3df; }
+        #map-wrapper { flex-grow: 1; overflow: hidden; position: relative; }
+        #map { height: 150%; width: 150%; position: absolute; top: -25%; left: -25%; transition: transform 0.1s linear; }
+        #radar { 
+            height: 240px; width: 100%; background: #ffffff; 
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            border-top: 4px solid #004b7a; box-shadow: 0 -4px 15px rgba(0,0,0,0.3);
+            padding-bottom: env(safe-area-inset-bottom); z-index: 2000;
+        }
+        #arrow { font-size: 80px; transition: transform 0.1s linear; display: inline-block; }
+        #info { margin-top: 10px; text-align: center; padding: 0 20px; line-height: 1.4; color: #333; }
+        .distance-tag { font-size: 1.2rem; font-weight: bold; color: #004b7a; }
+    </style>
+</head>
+<body>
+    <div id="map-wrapper"><div id="map"></div></div>
+    <div id="radar">
+        <div id="arrow">⬆️</div>
+        <div id="info">Initializing...</div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        // 1. Setup All Variables First
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([45.4215, -75.6972], 16);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        const cityUrl = "https://maps.ottawa.ca/arcgis/rest/services/PublicWashrooms/MapServer/0/query?outFields=*&where=1%3D1&f=geojson";
+        const washroomUrl = "https://corsproxy.io/?" + encodeURIComponent(cityUrl);
+        
+        let washroomData = null;
+        let userMarker = L.circleMarker([0, 0], { radius: 10, color: 'white', fillColor: '#007bff', fillOpacity: 1, weight: 3 }).addTo(map);
+        let targetBearing = 0;
+        let currentCompass = 0;
+
+        function updateStatus(msg) { document.getElementById('info').innerHTML = msg; }
+
+        // 2. Logic & Math Functions
+        function getStatus(toilet) {
+            const hour = new Date().getHours();
+            const month = new Date().getMonth(); 
+            if (toilet.properties.TYPE === 'Park' && (month < 4 || month > 9)) return { open: false, message: "Closed (Winter)" };
+            return (hour >= 6 && hour < 23) ? { open: true, message: "Likely Open" } : { open: false, message: "Closed" };
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3;
+            const dLat = (lat2-lat1) * Math.PI/180;
+            const dLon = (lon2-lon1) * Math.PI/180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        // 3. Compass Handling
+        window.addEventListener('deviceorientationabsolute', (e) => {
+            if (e.alpha !== null) {
+                currentCompass = e.alpha;
+                document.getElementById('map').style.transform = `rotate(${-currentCompass}deg)`;
+                document.getElementById('arrow').style.transform = `rotate(${targetBearing - currentCompass}deg)`;
+                // Counter-rotate markers
+                document.querySelectorAll('.leaflet-interactive').forEach(m => {
+                    if (m !== userMarker._path) {
+                        m.style.transformOrigin = "center";
+                        const baseT = m.style.transform.split('rotate')[0];
+                        m.style.transform = `${baseT} rotate(${currentCompass}deg)`;
+                    }
+                });
+            }
+        }, true);
+
+        // 4. Update Function
+        function refreshUI(uLat, uLon) {
+            if (!washroomData) return;
+            let closest = null, minD = Infinity;
+            washroomData.features.forEach(t => {
+                if (!getStatus(t).open) return;
+                const d = getDistance(uLat, uLon, t.geometry.coordinates[1], t.geometry.coordinates[0]);
+                if (d < minD) { minD = d; closest = t; }
+            });
+            if (closest) {
+                const dist = Math.round(minD);
+                updateStatus(`<span class="distance-tag">${dist}m away</span><br><strong>${closest.properties.NAME}</strong><br><span style="color: green;">● ${getStatus(closest).message}</span>`);
+                const dLon = (closest.geometry.coordinates[0] - uLon) * Math.PI / 180;
+                const y = Math.sin(dLon) * Math.cos(closest.geometry.coordinates[1] * Math.PI / 180);
+                const x = Math.cos(uLat * Math.PI / 180) * Math.sin(closest.geometry.coordinates[1] * Math.PI / 180) - Math.sin(uLat * Math.PI / 180) * Math.cos(closest.geometry.coordinates[1] * Math.PI / 180) * Math.cos(dLon);
+                targetBearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+            }
+        }
+
+        // 5. Execution Flow
+        updateStatus("Fetching Ottawa data...");
+        fetch(washroomUrl)
+            .then(res => res.json())
+            .then(data => {
+                washroomData = data;
+                L.geoJSON(data, { pointToLayer: (f, ll) => L.circleMarker(ll, { radius: 7, color: '#004b7a', fillColor: '#004b7a', fillOpacity: 0.8 }) }).addTo(map);
+                updateStatus("Data loaded. Waiting for GPS...");
+                navigator.geolocation.watchPosition((pos) => {
+                    const { latitude: lat, longitude: lon } = pos.coords;
+                    userMarker.setLatLng([lat, lon]);
+                    map.panTo([lat, lon]);
+                    refreshUI(lat, lon);
+                }, (err) => updateStatus("GPS Error: " + err.message), { enableHighAccuracy: true });
+            })
+            .catch(err => updateStatus("Load Error: Check your connection."));
+    </script>
+</body>
+</html>
